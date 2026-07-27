@@ -23,7 +23,7 @@ from torch._inductor.utils import (
 )
 from torch.utils._helion import has_helion
 from torch.utils._pallas import has_pallas_package, has_tpu_pallas
-from torch.utils._triton import has_triton
+from torch.utils._triton import has_triton, has_triton_package
 from torch.utils._config_module import ConfigModule
 from torch.testing._internal.common_device_type import (
     get_desired_device_type_test_bases,
@@ -177,6 +177,40 @@ requires_gpu = functools.partial(
 )
 requires_triton = functools.partial(unittest.skipIf, not HAS_TRITON, "requires triton")
 requires_helion = functools.partial(unittest.skipIf, not HAS_HELION, "requires helion")
+
+
+def ensure_triton(test_case, device=None, *, required_on_cpu=True):
+    """Skip unless Triton is available for the given device.
+
+    Unlike module-level HAS_TRITON / requires_triton (any-device global via
+    has_triton()), this gates on the device's DeviceInterface so privateuse1
+    backends that register is_triton_capable() are not skipped solely because
+    CUDA/XPU are absent. required_on_cpu=False lets CPU run without Triton.
+    """
+    if device is None:
+        if not has_triton():
+            test_case.skipTest("requires triton")
+        return
+
+    device_type = torch.device(device).type
+    if not required_on_cpu and device_type == "cpu":
+        return
+
+    # raise_if_triton_unavailable assumes the package is importable.
+    if not has_triton_package():
+        test_case.skipTest("requires triton")
+
+    from torch._dynamo.device_interface import get_interface_for_device
+
+    try:
+        iface = get_interface_for_device(device_type)
+    except NotImplementedError:
+        test_case.skipTest(f"requires triton on {device_type}")
+
+    try:
+        iface.raise_if_triton_unavailable(device)
+    except Exception as e:
+        test_case.skipTest(str(e) or f"requires triton on {device_type}")
 
 
 def requires_gpu_with_enough_memory(min_mem_required):
